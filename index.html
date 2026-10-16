@@ -40,7 +40,7 @@
 <body>
 <div id="menu">
   <h1>AR 복싱 <span>트레이너</span></h1>
-  <p class="sub">패스스루로 방이 보이는 상태에서 샌드백을 치고, LED 신호 후 날아오는 공을 피하세요.</p>
+  <p class="sub">패스스루로 방이 보이는 상태에서 샌드백을 치고, LED 신호와 함께 날아오는 공을 피하세요.</p>
 
   <div class="card">
     <h2>게임 방식</h2>
@@ -120,7 +120,9 @@ const CFG = {
   ledBelowHead:0.22,     // 어깨 높이
   fistRadius:0.05,
   ballRadius:0.06,
-  headRadius:0.11,
+  headRadius:0.10,       // 머리 판정 구 반지름 (공 중심 기준)
+  headBackOffset:0.07,   // 눈 위치 → 머리 중심 거리
+  blinkTime:0.25,        // LED 점등 시간(초)
   minPunch:5,            // m/s
   basePoints:100,
   maxMult:3,
@@ -282,6 +284,7 @@ let actx = null;
 function initAudio() { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} }
 function tone(f, dur, { type='sine', vol=0.2, f2=null, pan=0 } = {}) {
   if (!actx) return;
+  if (actx.state === 'suspended') actx.resume();
   const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
   o.type = type; o.frequency.setValueAtTime(f, t);
   if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur);
@@ -290,17 +293,23 @@ function tone(f, dur, { type='sine', vol=0.2, f2=null, pan=0 } = {}) {
   if (pan && actx.createStereoPanner) { const p = actx.createStereoPanner(); p.pan.value = pan; node = node.connect(p); }
   node.connect(actx.destination); o.start(t); o.stop(t + dur + 0.02);
 }
-function noise(dur, vol) {
+function noise(dur, vol, freq = 900) {
   if (!actx) return;
+  if (actx.state === 'suspended') actx.resume();
   const n = Math.floor(actx.sampleRate * dur), buf = actx.createBuffer(1, n, actx.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
   const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
-  s.buffer = buf; f.type = 'lowpass'; f.frequency.value = 900; g.gain.value = vol;
+  s.buffer = buf; f.type = 'lowpass'; f.frequency.value = freq; g.gain.value = vol;
   s.connect(f).connect(g).connect(actx.destination); s.start();
 }
 const sfx = {
-  punch: p => { tone(150, 0.2, { type:'triangle', vol:0.3 + 0.35 * p, f2:50 }); noise(0.09, 0.15 + 0.3 * p); },
-  weak:  () => tone(240, 0.1, { type:'triangle', vol:0.12, f2:130 }),
+  // 샌드백 타격음: 묵직한 저음 '쿵' + 가죽 '퍽' 소리. p = 0(약)~1(강)
+  punch: p => {
+    tone(95, 0.28, { type:'sine', vol:0.45 + 0.45 * p, f2:42 });
+    tone(170, 0.12, { type:'triangle', vol:0.2 + 0.2 * p, f2:80 });
+    noise(0.07 + 0.05 * p, 0.35 + 0.45 * p, 1400 + 1600 * p);
+  },
+  weak:  () => { tone(110, 0.18, { type:'sine', vol:0.3, f2:55 }); noise(0.05, 0.22, 1100); },
   blink: (hook, side) => tone(hook ? 620 : 980, 0.07, { type:'square', vol:0.06, pan:side * 0.8 }),
   head:  () => { tone(180, 0.35, { type:'sawtooth', vol:0.22, f2:60 }); noise(0.2, 0.25); },
   block: () => tone(520, 0.12, { type:'triangle', vol:0.2, f2:300 }),
@@ -313,14 +322,30 @@ function haptic(src, intensity, ms) {
 }
 
 /* ---------------- 주먹 ---------------- */
-function makeHand(color) {
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(CFG.fistRadius, 20, 14),
-    new THREE.MeshStandardMaterial({ color, roughness:0.35, transparent:true, opacity:0.85 }));
+// 대략적인 복싱 글러브: 주먹 몸통 + 엄지 + 손목 커프 + 흰 띠. -Z가 주먹 앞쪽(펀치 방향)
+function makeGlove(color, side) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color, roughness:0.3, metalness:0.05 });
+  const white = new THREE.MeshStandardMaterial({ color:0xf2f2f2, roughness:0.5 });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.055, 24, 18), mat);
+  body.scale.set(1.0, 0.9, 1.2); body.position.z = -0.01; g.add(body);
+  const pad = new THREE.Mesh(new THREE.SphereGeometry(0.05, 20, 14), mat);  // 너클 쪽 볼록함
+  pad.scale.set(1.0, 0.85, 0.7); pad.position.set(0, 0.008, -0.05); g.add(pad);
+  const thumb = new THREE.Mesh(new THREE.SphereGeometry(0.022, 14, 10), mat);
+  thumb.scale.set(1, 1, 2.0); thumb.position.set(side * -0.045, 0.012, -0.02); g.add(thumb);
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.046, 0.022, 24), white);
+  band.rotation.x = Math.PI / 2; band.position.z = 0.055; g.add(band);
+  const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.043, 0.04, 0.07, 24), mat);
+  cuff.rotation.x = Math.PI / 2; cuff.position.z = 0.1; g.add(cuff);
+  return g;
+}
+function makeHand(color, side) {
+  const mesh = makeGlove(color, side);
   mesh.visible = false; scene.add(mesh);
   return { mesh, src:null, seen:false, pos:new V3(), local:new V3(), prevLocal:new V3(), hasPrev:false,
            vel:new V3(), hist:[], peak:0, inside:false, cooldown:0 };
 }
-const hands = { left:makeHand(0x2f6bff), right:makeHand(0xe53935) };
+const hands = { left:makeHand(0x1e5bff, -1), right:makeHand(0x1e5bff, 1) };
 const invQ = new THREE.Quaternion();
 
 function updateHands(frame, ref, now, dt) {
@@ -338,6 +363,7 @@ function updateHands(frame, ref, now, dt) {
     h.seen = true; h.src = src;
     const p = pose.transform.position; h.pos.set(p.x, p.y, p.z);
     h.mesh.position.copy(h.pos);
+    const o = pose.transform.orientation; h.mesh.quaternion.set(o.x, o.y, o.z, o.w);
     if (!placed) continue;
     h.local.copy(h.pos); world.worldToLocal(h.local);
     if (!h.hasPrev) { h.prevLocal.copy(h.local); h.hasPrev = true; h.vel.set(0, 0, 0); }
@@ -357,7 +383,7 @@ function afterHands() { for (const k in hands) { const h = hands[k]; if (h.seen 
 /* ---------------- 게임 상태 ---------------- */
 let settings = readSettings();
 let state = 'idle', placed = false, gt = 0, cdT = 0, hudTimer = 0;
-const headWorld = new V3(0, 1.6, 0), headQuat = new THREE.Quaternion(), headLocal = new V3();
+const headWorld = new V3(0, 1.6, 0), headQuat = new THREE.Quaternion(), headLocal = new V3(), headCenterLocal = new V3();
 let stats, telegraph, nextSpawnAt, lastBlinkOn, adapt;
 const balls = [];
 const ballGeo = new THREE.SphereGeometry(CFG.ballRadius, 24, 16);
@@ -426,7 +452,8 @@ function updateBalls(dt) {
         floatText('막기!', '#7fdcff', p.clone(), 0.8); remove = true; break;
       }
     }
-    if (!remove && b.t < 1.4 && p.distanceTo(headLocal) < CFG.ballRadius + CFG.headRadius) {
+    // 공의 '중심'이 머리 구(눈 위치에서 뒤로 7cm, 반지름 10cm) 안에 들어와야 피격
+    if (!remove && b.t < 1.4 && p.distanceTo(headCenterLocal) < CFG.headRadius) {
       stats.headHits++; stats.score = Math.max(0, stats.score - CFG.headPenalty);
       sfx.head(); flashT = 0.35;
       for (const k in hands) haptic(hands[k].src, 1, 120);
@@ -554,7 +581,11 @@ function drawHud() {
 }
 
 function update(dt) {
-  if (placed) { headLocal.copy(headWorld); world.worldToLocal(headLocal); }
+  if (placed) {
+    headLocal.copy(headWorld); world.worldToLocal(headLocal);
+    headCenterLocal.set(0, 0, CFG.headBackOffset).applyQuaternion(headQuat).add(headWorld);
+    world.worldToLocal(headCenterLocal);
+  }
 
   if (state === 'calibrate' || state === 'results') {
     const fwd = new V3(0, 0, -1).applyQuaternion(headQuat); fwd.y = 0;
@@ -576,20 +607,16 @@ function update(dt) {
     updateAdapt(dt);
     for (const k in hands) checkPunch(hands[k]);
     const P = params();
+    // LED 깜빡임과 동시에 공 발사. 목표는 '이 순간'의 머리 위치로 고정 (이후 추적 없음)
     if (!telegraph && gt >= nextSpawnAt) {
-      telegraph = { side: Math.random() < 0.5 ? -1 : 1, hook: Math.random() < P.hookRatio, start: gt, dur: P.telegraph, speed: P.ballSpeed };
-      lastBlinkOn = false;
+      telegraph = { side: Math.random() < 0.5 ? -1 : 1, hook: Math.random() < P.hookRatio, start: gt, speed: P.ballSpeed };
+      launchBall(telegraph);
+      setLED(telegraph.side, telegraph.hook, true);
+      sfx.blink(telegraph.hook, telegraph.side);
+      nextSpawnAt = gt + P.interval * (0.75 + Math.random() * 0.5);
     }
-    if (telegraph) {
-      const k = (gt - telegraph.start) / telegraph.dur;
-      const on = k < 0.3 || (k > 0.5 && k < 0.8);
-      if (on && !lastBlinkOn) sfx.blink(telegraph.hook, telegraph.side);
-      lastBlinkOn = on;
-      setLED(telegraph.side, telegraph.hook, on);
-      if (k >= 1) {
-        launchBall(telegraph); setLED(telegraph.side, false, false); telegraph = null;
-        nextSpawnAt = gt + P.interval * (0.75 + Math.random() * 0.5);
-      }
+    if (telegraph && gt - telegraph.start >= CFG.blinkTime) {
+      setLED(telegraph.side, false, false); telegraph = null;
     }
     updateBalls(dt);
     hudTimer += dt; if (hudTimer > 0.1) { hudTimer = 0; drawHud(); }
@@ -637,6 +664,7 @@ $('start').addEventListener('click', async () => {
     await renderer.xr.setSession(session);
     session.addEventListener('end', () => { session = null; state = 'idle'; placed = false; renderer.setAnimationLoop(null); $('menu').classList.remove('hide'); });
     session.addEventListener('select', () => {
+      initAudio();
       if (state === 'calibrate') startCountdown();
       else if (state === 'results') toCalibrate();
     });
