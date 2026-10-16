@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AR 복싱 트레이너</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#0b0f15; --card:#141b25; --line:#24303f; --fg:#e8eef5; --sub:#8fa1b5; --acc:#00e5ff; --red:#ff3b3b; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:var(--bg); color:var(--fg); font-family:"Noto Sans KR",system-ui,sans-serif; }
+  canvas { position:fixed; inset:0; z-index:-1; }
+  #menu { max-width:560px; margin:0 auto; padding:28px 16px 48px; }
+  h1 { font-size:28px; margin:0 0 4px; font-weight:900; letter-spacing:-0.5px; }
+  h1 span { color:var(--red); }
+  .sub { color:var(--sub); margin:0 0 22px; font-size:14px; line-height:1.6; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; margin-bottom:14px; }
+  .card h2 { font-size:15px; margin:0 0 12px; color:var(--acc); font-weight:700; }
+  .seg { display:flex; gap:8px; flex-wrap:wrap; }
+  .seg label { flex:1; min-width:70px; }
+  .seg input { display:none; }
+  .seg span { display:block; text-align:center; padding:12px 8px; border-radius:10px; border:1px solid var(--line); cursor:pointer; font-weight:700; font-size:15px; }
+  .seg input:checked + span { background:var(--acc); color:#001318; border-color:var(--acc); }
+  select { width:100%; padding:12px; border-radius:10px; background:#0e141c; color:var(--fg); border:1px solid var(--line); font-size:15px; font-family:inherit; }
+  .row { display:flex; gap:10px; align-items:center; margin-top:10px; }
+  .row > div { flex:1; }
+  .lbl { font-size:13px; color:var(--sub); margin-bottom:6px; }
+  #start { width:100%; padding:18px; font-size:19px; font-weight:900; border:0; border-radius:14px; background:var(--red); color:#fff; cursor:pointer; margin-top:6px; font-family:inherit; }
+  #start:disabled { background:#3a4350; color:#8a95a3; cursor:not-allowed; }
+  #msg { margin-top:12px; font-size:14px; color:#ffcc66; line-height:1.6; }
+  #last { white-space:pre-line; font-size:14px; line-height:1.8; color:var(--fg); }
+  ul.help { margin:0; padding-left:18px; color:var(--sub); font-size:13.5px; line-height:1.75; }
+  .hide { display:none !important; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="menu">
+  <h1>AR 복싱 <span>트레이너</span></h1>
+  <p class="sub">패스스루로 방이 보이는 상태에서 샌드백을 치고, LED 신호 후 날아오는 공을 피하세요.</p>
+
+  <div class="card">
+    <h2>게임 방식</h2>
+    <div class="seg">
+      <label><input type="radio" name="mode" value="time" checked><span>시간제</span></label>
+      <label><input type="radio" name="mode" value="score"><span>점수제</span></label>
+    </div>
+    <div class="row">
+      <div id="timeBox"><div class="lbl">플레이 시간</div>
+        <select id="minutes">
+          <option value="1">1분</option><option value="2">2분</option><option value="3" selected>3분</option>
+          <option value="5">5분</option><option value="10">10분</option>
+        </select></div>
+      <div id="scoreBox" class="hide"><div class="lbl">목표 점수</div>
+        <select id="target">
+          <option value="1000">1,000점</option><option value="3000" selected>3,000점</option>
+          <option value="5000">5,000점</option><option value="10000">10,000점</option><option value="20000">20,000점</option>
+        </select></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>난이도</h2>
+    <div class="seg">
+      <label><input type="radio" name="diff" value="easy"><span>하</span></label>
+      <label><input type="radio" name="diff" value="normal" checked><span>중</span></label>
+      <label><input type="radio" name="diff" value="hard"><span>상</span></label>
+      <label><input type="radio" name="diff" value="adaptive"><span>맞춤</span></label>
+    </div>
+    <div class="row">
+      <div><div class="lbl">샌드백 거리</div>
+        <select id="dist">
+          <option value="0.6">60cm</option><option value="0.7" selected>70cm</option>
+          <option value="0.8">80cm</option><option value="0.9">90cm</option>
+        </select></div>
+    </div>
+  </div>
+
+  <button id="start" disabled>AR 시작</button>
+  <div id="msg">WebXR 확인 중…</div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>지난 기록</h2>
+    <div id="last">아직 기록이 없습니다.</div>
+  </div>
+
+  <div class="card">
+    <h2>플레이 방법</h2>
+    <ul class="help">
+      <li>시작 후 샌드백을 놓을 방향을 바라보고 트리거(손이면 핀치)를 누르면 정면에 샌드백이 생깁니다.</li>
+      <li>5m/s 이상으로 쳐야 득점. 점수 = 100 × (속도 ÷ 5), 10m/s면 2배(최대 3배).</li>
+      <li>LED <b>앞부분만</b> 깜빡 → 직선 공 · LED <b>전체</b> 깜빡 → 훅 공.</li>
+      <li>공에 머리를 맞으면 −100점. 주먹으로 공을 막을 수도 있습니다.</li>
+      <li>맞춤 난이도: 최근 15초간 펀치 빈도·평균 속도에 맞춰 공의 속도·빈도가 변합니다.</li>
+      <li>결과 화면에서 트리거/핀치 = 다시하기, 그립 = 종료. 주변 공간을 충분히 비워 두세요.</li>
+    </ul>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+const V3 = THREE.Vector3;
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const FONT = '"Noto Sans KR", system-ui, sans-serif';
+
+/* ---------------- 설정 ---------------- */
+const DIFF = {
+  easy:   { name:'하', ballSpeed:3.0, interval:2.6,  hookRatio:0.20, telegraph:0.90 },
+  normal: { name:'중', ballSpeed:4.5, interval:1.8,  hookRatio:0.35, telegraph:0.70 },
+  hard:   { name:'상', ballSpeed:6.5, interval:1.15, hookRatio:0.50, telegraph:0.50 },
+};
+const CFG = {
+  bagRadius:0.10,        // 두께 20cm
+  bagLength:1.1,
+  bagTopAboveHead:0.25,
+  ledBelowHead:0.22,     // 어깨 높이
+  fistRadius:0.05,
+  ballRadius:0.06,
+  headRadius:0.11,
+  minPunch:5,            // m/s
+  basePoints:100,
+  maxMult:3,
+  headPenalty:100,
+};
+
+/* ---------------- 메뉴 ---------------- */
+document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => {
+  const t = document.querySelector('input[name=mode]:checked').value === 'time';
+  $('timeBox').classList.toggle('hide', !t); $('scoreBox').classList.toggle('hide', t);
+}));
+function readSettings() {
+  return {
+    mode: document.querySelector('input[name=mode]:checked').value,
+    minutes: +$('minutes').value,
+    target: +$('target').value,
+    diff: document.querySelector('input[name=diff]:checked').value,
+    dist: +$('dist').value,
+  };
+}
+(async () => {
+  try {
+    if (navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')) {
+      $('start').disabled = false; $('msg').textContent = '준비 완료. 메타 퀘스트에서 AR 시작을 누르세요.';
+    } else {
+      $('msg').textContent = '이 브라우저는 WebXR AR(immersive-ar)을 지원하지 않습니다. 메타 퀘스트 브라우저에서 HTTPS 주소(GitHub Pages)로 열어주세요.';
+    }
+  } catch (e) { $('msg').textContent = 'WebXR 확인 실패: ' + e.message; }
+})();
+try { const l = localStorage.getItem('arbox_last'); if (l) $('last').textContent = l; } catch (e) {}
+
+/* ---------------- 렌더러/씬 ---------------- */
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x000000, 0);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local-floor');
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 50);
+scene.add(camera);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.3));
+const dl = new THREE.DirectionalLight(0xffffff, 1.6); dl.position.set(1, 3, 2); scene.add(dl);
+
+// world: 샌드백 기준 좌표계 (원점=샌드백 축 바닥, +z=사용자 쪽, +x=사용자 기준 오른쪽)
+const world = new THREE.Group(); world.visible = false; scene.add(world);
+const pivot = new THREE.Group(); world.add(pivot);
+let bagMat = null, bagTop = 1.8, bagBottom = 0.7, ledY = 1.4, userZ = 0.7;
+const leds = { '-1': null, '1': null };
+
+function buildBag(H) {
+  while (pivot.children.length) { const c = pivot.children.pop(); c.geometry?.dispose(); }
+  bagTop = H + CFG.bagTopAboveHead;
+  bagBottom = Math.max(0.1, bagTop - CFG.bagLength);
+  ledY = H - CFG.ledBelowHead;
+  const len = bagTop - bagBottom, R = CFG.bagRadius;
+  pivot.position.set(0, bagTop, 0); pivot.rotation.set(0, 0, 0);
+
+  bagMat = new THREE.MeshStandardMaterial({ color:0x8b1d1d, roughness:0.55, metalness:0.05, emissive:0xffffff, emissiveIntensity:0 });
+  const bag = new THREE.Mesh(new THREE.CylinderGeometry(R, R, len, 40), bagMat);
+  bag.position.y = -len / 2; pivot.add(bag);
+  const bandMat = new THREE.MeshStandardMaterial({ color:0x111111, roughness:0.7 });
+  for (const y of [-0.03, -len + 0.03]) {
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(R + 0.003, R + 0.003, 0.05, 40), bandMat);
+    b.position.y = y; pivot.add(b);
+  }
+  const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.7, 8), new THREE.MeshStandardMaterial({ color:0x999999 }));
+  rope.position.y = 0.35; pivot.add(rope);
+
+  // LED: 가로 띠 형태(원통을 감싸는 호). theta=0 → 사용자 쪽(+z), π/2 → 오른쪽(+x)
+  const r = R + 0.007, h = 0.035, y = ledY - bagTop;
+  const mk = (start, length) => {
+    const m = new THREE.MeshStandardMaterial({ color:0x222222, emissive:0x00e5ff, emissiveIntensity:0.04, side:THREE.DoubleSide });
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 24, 1, true, start, length), m);
+    mesh.position.y = y; pivot.add(mesh); return m;
+  };
+  leds['1']  = { front: mk(0.25, 0.9),            rest: mk(1.15, 1.75) };            // 오른쪽
+  leds['-1'] = { front: mk(Math.PI*2 - 1.15, 0.9), rest: mk(Math.PI*2 - 2.9, 1.75) }; // 왼쪽
+
+  // 발 위치 표시
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.22, 48), new THREE.MeshBasicMaterial({ color:0x00e5ff, transparent:true, opacity:0.5, side:THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2; ring.position.set(0, 0.005, userZ); pivot.add(ring);
+  ring.position.y = 0.005 - bagTop; // pivot 좌표 보정
+  hud.mesh.position.set(0, H + 0.42, -0.25);
+}
+function setLED(side, hook, on) {
+  const L = leds[String(side)]; if (!L) return;
+  L.front.emissiveIntensity = on ? 3.5 : 0.04;
+  L.rest.emissiveIntensity = (on && hook) ? 3.5 : 0.04;
+  L.front.color.setHex(on ? 0x88ffff : 0x222222);
+  L.rest.color.setHex(on && hook ? 0x88ffff : 0x222222);
+}
+function ledsOff() { setLED(-1, false, false); setLED(1, false, false); }
+
+/* ---------------- 패널(HUD) ---------------- */
+function makePanel(cw, ch, w, h) {
+  const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map:tex, transparent:true, depthWrite:false }));
+  mesh.renderOrder = 10;
+  return { canvas, ctx, tex, mesh };
+}
+function drawPanel(p, lines, bar = null) {
+  const { ctx, canvas:c } = p;
+  ctx.clearRect(0, 0, c.width, c.height);
+  ctx.fillStyle = 'rgba(8,12,18,0.8)';
+  ctx.beginPath(); ctx.roundRect(8, 8, c.width - 16, c.height - 16, 36); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,229,255,0.55)'; ctx.lineWidth = 4; ctx.stroke();
+  const total = lines.reduce((a, l) => a + l.size * 1.32, 0) + (bar != null ? 40 : 0);
+  let y = (c.height - total) / 2;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (const l of lines) {
+    ctx.font = `${l.weight || 700} ${l.size}px ${FONT}`; ctx.fillStyle = l.color || '#fff';
+    ctx.fillText(l.text, c.width / 2, y + l.size * 0.12); y += l.size * 1.32;
+  }
+  if (bar != null) {
+    const w = c.width - 120, x = 60; y += 14;
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.roundRect(x, y, w, 16, 8); ctx.fill();
+    ctx.fillStyle = '#00e5ff'; ctx.beginPath(); ctx.roundRect(x, y, Math.max(16, w * clamp(bar, 0, 1)), 16, 8); ctx.fill();
+  }
+  p.tex.needsUpdate = true;
+}
+const hud = makePanel(1024, 512, 0.56, 0.28); world.add(hud.mesh);
+const prompt = makePanel(1024, 640, 0.8, 0.5); prompt.mesh.visible = false; scene.add(prompt.mesh);
+
+/* ---------------- 떠오르는 점수 텍스트 ---------------- */
+const floaters = [];
+function floatText(text, color, pos, scale = 1) {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 192;
+  const ctx = c.getContext('2d');
+  ctx.font = `900 84px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineWidth = 12; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(text, 256, 96);
+  ctx.fillStyle = color; ctx.fillText(text, 256, 96);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map:tex, transparent:true, depthTest:false, depthWrite:false }));
+  sp.scale.set(0.3 * scale, 0.1125 * scale, 1); sp.position.copy(pos); sp.renderOrder = 20;
+  world.add(sp); floaters.push({ sp, t:0, y0:pos.y });
+}
+function updateFloaters(dt) {
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i]; f.t += dt;
+    f.sp.position.y = f.y0 + f.t * 0.28;
+    f.sp.material.opacity = 1 - f.t / 0.9;
+    if (f.t > 0.9) { world.remove(f.sp); f.sp.material.map.dispose(); f.sp.material.dispose(); floaters.splice(i, 1); }
+  }
+}
+
+/* ---------------- 피격 플래시 ---------------- */
+const flash = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 12),
+  new THREE.MeshBasicMaterial({ color:0xff0000, transparent:true, opacity:0, side:THREE.BackSide, depthTest:false, depthWrite:false }));
+flash.renderOrder = 30; camera.add(flash);
+let flashT = 0;
+
+/* ---------------- 사운드 ---------------- */
+let actx = null;
+function initAudio() { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} }
+function tone(f, dur, { type='sine', vol=0.2, f2=null, pan=0 } = {}) {
+  if (!actx) return;
+  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
+  o.type = type; o.frequency.setValueAtTime(f, t);
+  if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  let node = o.connect(g);
+  if (pan && actx.createStereoPanner) { const p = actx.createStereoPanner(); p.pan.value = pan; node = node.connect(p); }
+  node.connect(actx.destination); o.start(t); o.stop(t + dur + 0.02);
+}
+function noise(dur, vol) {
+  if (!actx) return;
+  const n = Math.floor(actx.sampleRate * dur), buf = actx.createBuffer(1, n, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+  const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+  s.buffer = buf; f.type = 'lowpass'; f.frequency.value = 900; g.gain.value = vol;
+  s.connect(f).connect(g).connect(actx.destination); s.start();
+}
+const sfx = {
+  punch: p => { tone(150, 0.2, { type:'triangle', vol:0.3 + 0.35 * p, f2:50 }); noise(0.09, 0.15 + 0.3 * p); },
+  weak:  () => tone(240, 0.1, { type:'triangle', vol:0.12, f2:130 }),
+  blink: (hook, side) => tone(hook ? 620 : 980, 0.07, { type:'square', vol:0.06, pan:side * 0.8 }),
+  head:  () => { tone(180, 0.35, { type:'sawtooth', vol:0.22, f2:60 }); noise(0.2, 0.25); },
+  block: () => tone(520, 0.12, { type:'triangle', vol:0.2, f2:300 }),
+  count: () => tone(440, 0.12, { vol:0.15 }),
+  go:    () => tone(880, 0.3, { vol:0.2 }),
+  end:   () => { tone(523, 0.2, { vol:0.18 }); setTimeout(() => tone(659, 0.2, { vol:0.18 }), 180); setTimeout(() => tone(784, 0.4, { vol:0.18 }), 360); },
+};
+function haptic(src, intensity, ms) {
+  try { const a = src?.gamepad?.hapticActuators?.[0]; if (a) a.pulse(clamp(intensity, 0, 1), ms); } catch (e) {}
+}
+
+/* ---------------- 주먹 ---------------- */
+function makeHand(color) {
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(CFG.fistRadius, 20, 14),
+    new THREE.MeshStandardMaterial({ color, roughness:0.35, transparent:true, opacity:0.85 }));
+  mesh.visible = false; scene.add(mesh);
+  return { mesh, src:null, seen:false, pos:new V3(), local:new V3(), prevLocal:new V3(), hasPrev:false,
+           vel:new V3(), hist:[], peak:0, inside:false, cooldown:0 };
+}
+const hands = { left:makeHand(0x2f6bff), right:makeHand(0xe53935) };
+const invQ = new THREE.Quaternion();
+
+function updateHands(frame, ref, now, dt) {
+  for (const k in hands) hands[k].seen = false;
+  invQ.copy(world.quaternion).invert();
+  for (const src of frame.session.inputSources) {
+    const h = hands[src.handedness]; if (!h) continue;
+    let pose = null, lv = null;
+    if (src.hand && frame.getJointPose) {
+      const j = src.hand.get('middle-finger-phalanx-proximal'); // 주먹 너클
+      if (j) pose = frame.getJointPose(j, ref);
+    }
+    if (!pose && src.gripSpace) { pose = frame.getPose(src.gripSpace, ref); if (pose) lv = pose.linearVelocity; }
+    if (!pose) continue;
+    h.seen = true; h.src = src;
+    const p = pose.transform.position; h.pos.set(p.x, p.y, p.z);
+    h.mesh.position.copy(h.pos);
+    if (!placed) continue;
+    h.local.copy(h.pos); world.worldToLocal(h.local);
+    if (!h.hasPrev) { h.prevLocal.copy(h.local); h.hasPrev = true; h.vel.set(0, 0, 0); }
+    else if (lv) h.vel.set(lv.x, lv.y, lv.z).applyQuaternion(invQ);
+    else if (dt > 0) h.vel.subVectors(h.local, h.prevLocal).divideScalar(dt);
+    h.hist.push([now, h.vel.length()]);
+    while (h.hist.length && now - h.hist[0][0] > 0.1) h.hist.shift();
+    h.peak = h.hist.reduce((m, e) => Math.max(m, e[1]), 0);
+  }
+  for (const k in hands) {
+    const h = hands[k]; h.mesh.visible = h.seen;
+    if (!h.seen) { h.hasPrev = false; h.hist.length = 0; }
+  }
+}
+function afterHands() { for (const k in hands) { const h = hands[k]; if (h.seen && placed) h.prevLocal.copy(h.local); } }
+
+/* ---------------- 게임 상태 ---------------- */
+let settings = readSettings();
+let state = 'idle', placed = false, gt = 0, cdT = 0, hudTimer = 0;
+const headWorld = new V3(0, 1.6, 0), headQuat = new THREE.Quaternion(), headLocal = new V3();
+let stats, telegraph, nextSpawnAt, lastBlinkOn, adapt;
+const balls = [];
+const ballGeo = new THREE.SphereGeometry(CFG.ballRadius, 24, 16);
+const ballMat = new THREE.MeshStandardMaterial({ color:0xff2020, emissive:0x660000, transparent:true, opacity:0.6, depthWrite:false, roughness:0.3 });
+const wob = { ax:0, az:0, vx:0, vz:0 };
+
+function resetGame() {
+  for (const b of balls) world.remove(b.mesh); balls.length = 0;
+  stats = { score:0, punches:0, weak:0, speedSum:0, maxSpeed:0, last:null, headHits:0, blocks:0, dodges:0 };
+  telegraph = null; nextSpawnAt = 2.0; lastBlinkOn = false; gt = 0;
+  adapt = { cur:{ ...DIFF.normal }, log:[], rate:0, avg:0 };
+  ledsOff();
+}
+function params() { return settings.diff === 'adaptive' ? adapt.cur : DIFF[settings.diff]; }
+
+function updateAdapt(dt) {
+  const win = 15;
+  adapt.log = adapt.log.filter(e => gt - e.t < win);
+  const span = Math.max(1, Math.min(win, gt));
+  adapt.rate = adapt.log.length / span;
+  adapt.avg = adapt.log.length ? adapt.log.reduce((a, e) => a + e.s, 0) / adapt.log.length : 0;
+  if (gt < 8 || settings.diff !== 'adaptive') return; // 8초 워밍업은 '중' 기준
+  const avg = adapt.avg || 3;
+  const tgt = {
+    ballSpeed: clamp(avg * 0.6, 2.5, 7.5),                     // 주먹 평균속도에 비례
+    interval:  clamp(2.4 / Math.max(adapt.rate, 0.3), 0.9, 3.2), // 주먹 빈도에 반비례
+    hookRatio: clamp(0.2 + (avg - 5) * 0.05, 0.15, 0.5),
+  };
+  tgt.telegraph = clamp(0.95 - (tgt.ballSpeed - 2.5) * 0.09, 0.45, 0.95);
+  const k = Math.min(1, dt * 0.4);
+  for (const key in tgt) adapt.cur[key] += (tgt[key] - adapt.cur[key]) * k;
+}
+
+/* ---------------- 공 ---------------- */
+function launchBall(tg) {
+  const s = tg.side;
+  const a = new V3(s * 0.30, ledY, -0.12);
+  const b = headLocal.clone();
+  let ctrl = null;
+  if (tg.hook) ctrl = new V3(s * 0.85, (a.y + b.y) / 2 + 0.05, a.z * 0.35 + b.z * 0.65 - 0.05);
+  let len = 0; const p0 = a.clone(), p1 = new V3();
+  const ball = { a, b, ctrl, t:0, len:0, dur:1, endDir:new V3(), mesh:new THREE.Mesh(ballGeo, ballMat), hit:false };
+  for (let i = 1; i <= 24; i++) { ballPos(ball, i / 24, p1); len += p1.distanceTo(p0); p0.copy(p1); }
+  ball.len = len; ball.dur = len / tg.speed;
+  if (ctrl) ball.endDir.subVectors(b, ctrl).normalize(); else ball.endDir.subVectors(b, a).normalize();
+  ball.mesh.position.copy(a); world.add(ball.mesh); balls.push(ball);
+}
+function ballPos(b, t, out) {
+  if (t <= 1) {
+    if (!b.ctrl) return out.lerpVectors(b.a, b.b, t);
+    const u = 1 - t;
+    return out.set(0, 0, 0).addScaledVector(b.a, u * u).addScaledVector(b.ctrl, 2 * u * t).addScaledVector(b.b, t * t);
+  }
+  return out.copy(b.b).addScaledVector(b.endDir, (t - 1) * b.len);
+}
+function updateBalls(dt) {
+  for (let i = balls.length - 1; i >= 0; i--) {
+    const b = balls[i];
+    b.t += dt / b.dur; ballPos(b, b.t, b.mesh.position);
+    const p = b.mesh.position;
+    let remove = false;
+    for (const k in hands) {
+      const h = hands[k];
+      if (h.seen && h.local.distanceTo(p) < CFG.ballRadius + CFG.fistRadius + 0.02) {
+        stats.blocks++; sfx.block(); haptic(h.src, 0.5, 40);
+        floatText('막기!', '#7fdcff', p.clone(), 0.8); remove = true; break;
+      }
+    }
+    if (!remove && b.t < 1.4 && p.distanceTo(headLocal) < CFG.ballRadius + CFG.headRadius) {
+      stats.headHits++; stats.score = Math.max(0, stats.score - CFG.headPenalty);
+      sfx.head(); flashT = 0.35;
+      for (const k in hands) haptic(hands[k].src, 1, 120);
+      floatText(`-${CFG.headPenalty}`, '#ff4d4d', new V3(0, ledY + 0.15, 0.2), 1.2);
+      remove = true;
+    }
+    if (!remove && b.t > 1.6) { stats.dodges++; remove = true; }
+    if (remove) { world.remove(b.mesh); balls.splice(i, 1); }
+  }
+}
+
+/* ---------------- 펀치 판정 ---------------- */
+function segDist2D(ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az, L = dx * dx + dz * dz;
+  const t = L > 1e-9 ? clamp(-(ax * dx + az * dz) / L, 0, 1) : 0;
+  return Math.hypot(ax + dx * t, az + dz * t);
+}
+function checkPunch(h) {
+  if (!h.seen || !h.hasPrev) return;
+  const p = h.local, q = h.prevLocal, r = CFG.bagRadius + CFG.fistRadius;
+  const dNow = Math.hypot(p.x, p.z);
+  if (h.inside) { if (dNow > r + 0.04) h.inside = false; return; }
+  const yOk = (p.y > bagBottom && p.y < bagTop) || (q.y > bagBottom && q.y < bagTop);
+  if (!yOk || gt < h.cooldown) return;
+  if (segDist2D(q.x, q.z, p.x, p.z) >= r) return;
+  h.inside = true;
+  const approaching = (h.vel.x * q.x + h.vel.z * q.z) < 0;
+  if (!approaching) return;
+  h.cooldown = gt + 0.12;
+  registerPunch(h, q);
+}
+function registerPunch(h, q) {
+  const speed = h.peak;
+  if (speed >= 1.5) adapt.log.push({ t:gt, s:speed });
+  const n = new V3(q.x, 0, q.z); if (n.lengthSq() < 1e-6) n.set(0, 0, 1); n.normalize();
+  const tp = new V3(n.x * (CFG.bagRadius + 0.06), clamp(h.local.y, bagBottom, bagTop) + 0.05, n.z * (CFG.bagRadius + 0.06) + 0.04);
+  // 샌드백 흔들림
+  wob.vx += clamp(-h.vel.z, -12, 12) * 0.12;
+  wob.vz += clamp(h.vel.x, -12, 12) * 0.12;
+  if (speed >= CFG.minPunch) {
+    const mult = Math.min(speed / CFG.minPunch, CFG.maxMult);
+    const pts = Math.round(CFG.basePoints * mult);
+    stats.score += pts; stats.punches++; stats.speedSum += speed;
+    stats.maxSpeed = Math.max(stats.maxSpeed, speed);
+    stats.last = { speed, mult };
+    const col = mult >= 2 ? '#ff9a1f' : '#ffe14d';
+    floatText(`+${pts}  ${speed.toFixed(1)}m/s`, col, tp, mult >= 2 ? 1.2 : 1);
+    sfx.punch(clamp((speed - 5) / 7, 0, 1)); haptic(h.src, 0.4 + speed / 15, 50);
+    bagMat.emissiveIntensity = 0.12 + 0.1 * (mult - 1);
+  } else {
+    stats.weak++; stats.last = { speed, mult:0 };
+    floatText(`${speed.toFixed(1)}m/s 약함`, '#aab4c0', tp, 0.8);
+    sfx.weak(); haptic(h.src, 0.2, 30);
+  }
+}
+
+/* ---------------- 흐름 ---------------- */
+const fmt = s => { s = Math.max(0, Math.ceil(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+function placeWorld() {
+  const fwd = new V3(0, 0, -1).applyQuaternion(headQuat); fwd.y = 0;
+  if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1); fwd.normalize();
+  userZ = settings.dist;
+  world.position.set(headWorld.x + fwd.x * userZ, 0, headWorld.z + fwd.z * userZ);
+  world.rotation.set(0, Math.atan2(-fwd.x, -fwd.z), 0);
+  world.updateMatrixWorld(true);
+  buildBag(headWorld.y);
+  world.visible = true; placed = true;
+  for (const k in hands) { hands[k].hasPrev = false; hands[k].inside = false; }
+}
+function showPrompt(lines) { prompt.mesh.visible = true; drawPanel(prompt, lines); }
+function toCalibrate() {
+  resetGame(); state = 'calibrate'; placed = false; world.visible = false;
+  showPrompt([
+    { text:'AR 복싱 트레이너', size:64, weight:900 },
+    { text:'샌드백을 놓을 방향을 바라보고', size:42, color:'#cfe' },
+    { text:'트리거(또는 핀치)를 누르세요', size:42, color:'#cfe' },
+    { text:'주변에 부딪힐 물건이 없는지 확인하세요', size:30, color:'#ffcc66' },
+  ]);
+}
+function startCountdown() { placeWorld(); prompt.mesh.visible = false; state = 'countdown'; cdT = 3.999; lastCd = 4; }
+let lastCd = 4;
+function endGame() {
+  state = 'results'; ledsOff();
+  for (const b of balls) world.remove(b.mesh); balls.length = 0;
+  sfx.end();
+  const avg = stats.punches ? stats.speedSum / stats.punches : 0;
+  let bestLine = '';
+  try {
+    if (settings.mode === 'time') {
+      const key = `arbox_t_${settings.diff}_${settings.minutes}`, prev = +localStorage.getItem(key) || 0;
+      if (stats.score > prev) { localStorage.setItem(key, stats.score); bestLine = '🏆 신기록!'; } else bestLine = `개인 최고 ${prev}점`;
+    } else {
+      const key = `arbox_s_${settings.diff}_${settings.target}`, prev = +localStorage.getItem(key) || 0;
+      if (!prev || gt < prev) { localStorage.setItem(key, gt.toFixed(1)); bestLine = '🏆 최단 기록!'; } else bestLine = `최단 기록 ${fmt(prev)}`;
+    }
+  } catch (e) {}
+  const diffName = settings.diff === 'adaptive' ? '맞춤' : DIFF[settings.diff].name;
+  const modeTxt = settings.mode === 'time' ? `시간제 ${settings.minutes}분` : `점수제 ${settings.target}점`;
+  showPrompt([
+    { text:'게임 종료', size:56, weight:900, color:'#00e5ff' },
+    { text:`${stats.score}점`, size:84, weight:900 },
+    { text:`유효 펀치 ${stats.punches} · 평균 ${avg.toFixed(1)} · 최고 ${stats.maxSpeed.toFixed(1)} m/s`, size:32, color:'#dde' },
+    { text:`머리 피격 ${stats.headHits} · 막기 ${stats.blocks} · 회피 ${stats.dodges} · ${fmt(gt)}`, size:32, color:'#dde' },
+    { text:`${modeTxt} · 난이도 ${diffName} · ${bestLine}`, size:28, color:'#ffcc66' },
+    { text:'트리거/핀치: 다시하기   그립: 종료', size:30, color:'#9ab' },
+  ]);
+  const summary = `${new Date().toLocaleString('ko-KR')}\n${modeTxt} · 난이도 ${diffName}\n점수 ${stats.score} · 유효 펀치 ${stats.punches} · 평균 ${avg.toFixed(1)}m/s · 최고 ${stats.maxSpeed.toFixed(1)}m/s\n머리 피격 ${stats.headHits} · 막기 ${stats.blocks} · 회피 ${stats.dodges} · 플레이 ${fmt(gt)}`;
+  $('last').textContent = summary;
+  try { localStorage.setItem('arbox_last', summary); } catch (e) {}
+}
+function drawHud() {
+  const diffTxt = settings.diff === 'adaptive'
+    ? `맞춤 · 공 ${adapt.cur.ballSpeed.toFixed(1)}m/s · ${adapt.cur.interval.toFixed(1)}초마다 · 펀치 ${adapt.rate.toFixed(1)}/s`
+    : `난이도 ${DIFF[settings.diff].name}`;
+  const lastTxt = stats.last ? (stats.last.mult ? `${stats.last.speed.toFixed(1)}m/s ×${stats.last.mult.toFixed(2)}` : `${stats.last.speed.toFixed(1)}m/s (5 미만)`) : '-';
+  let line2, bar;
+  if (settings.mode === 'time') { const total = settings.minutes * 60; line2 = `남은 시간 ${fmt(total - gt)}`; bar = gt / total; }
+  else { line2 = `목표 ${settings.target} · 경과 ${fmt(gt)}`; bar = stats.score / settings.target; }
+  drawPanel(hud, [
+    { text:`${stats.score}`, size:110, weight:900 },
+    { text:line2, size:46, color:'#9ff' },
+    { text:`최근 ${lastTxt} · 최고 ${stats.maxSpeed.toFixed(1)}`, size:36, color:'#dde' },
+    { text:diffTxt, size:28, color:'#9ab' },
+  ], bar);
+}
+
+function update(dt) {
+  if (placed) { headLocal.copy(headWorld); world.worldToLocal(headLocal); }
+
+  if (state === 'calibrate' || state === 'results') {
+    const fwd = new V3(0, 0, -1).applyQuaternion(headQuat); fwd.y = 0;
+    if (fwd.lengthSq() > 1e-4) fwd.normalize(); else fwd.set(0, 0, -1);
+    const target = headWorld.clone().addScaledVector(fwd, 1.0); target.y = headWorld.y - 0.05;
+    prompt.mesh.position.lerp(target, Math.min(1, dt * 4));
+    prompt.mesh.lookAt(headWorld);
+  }
+  if (state === 'countdown') {
+    cdT -= dt;
+    const n = Math.ceil(cdT);
+    if (n !== lastCd) { lastCd = n; if (n > 0) sfx.count(); }
+    drawPanel(hud, [{ text: n > 0 ? String(n) : 'GO!', size:180, weight:900, color: n > 0 ? '#fff' : '#ffe14d' },
+                    { text:'주먹을 들고 준비!', size:40, color:'#9ff' }]);
+    if (cdT <= 0) { state = 'playing'; sfx.go(); hudTimer = 1; }
+  }
+  if (state === 'playing') {
+    gt += dt;
+    updateAdapt(dt);
+    for (const k in hands) checkPunch(hands[k]);
+    const P = params();
+    if (!telegraph && gt >= nextSpawnAt) {
+      telegraph = { side: Math.random() < 0.5 ? -1 : 1, hook: Math.random() < P.hookRatio, start: gt, dur: P.telegraph, speed: P.ballSpeed };
+      lastBlinkOn = false;
+    }
+    if (telegraph) {
+      const k = (gt - telegraph.start) / telegraph.dur;
+      const on = k < 0.3 || (k > 0.5 && k < 0.8);
+      if (on && !lastBlinkOn) sfx.blink(telegraph.hook, telegraph.side);
+      lastBlinkOn = on;
+      setLED(telegraph.side, telegraph.hook, on);
+      if (k >= 1) {
+        launchBall(telegraph); setLED(telegraph.side, false, false); telegraph = null;
+        nextSpawnAt = gt + P.interval * (0.75 + Math.random() * 0.5);
+      }
+    }
+    updateBalls(dt);
+    hudTimer += dt; if (hudTimer > 0.1) { hudTimer = 0; drawHud(); }
+    if (settings.mode === 'time' ? gt >= settings.minutes * 60 : stats.score >= settings.target) { drawHud(); endGame(); }
+  }
+
+  // 샌드백 흔들림(감쇠 스프링)
+  if (placed) {
+    const K = 60, C = 6;
+    wob.vx += (-K * wob.ax - C * wob.vx) * dt; wob.vz += (-K * wob.az - C * wob.vz) * dt;
+    wob.ax += wob.vx * dt; wob.az += wob.vz * dt;
+    pivot.rotation.x = clamp(wob.ax, -0.25, 0.25) * 0.15;
+    pivot.rotation.z = clamp(wob.az, -0.25, 0.25) * 0.15;
+    if (bagMat) bagMat.emissiveIntensity = Math.max(0, bagMat.emissiveIntensity - dt * 0.8);
+  }
+  if (flashT > 0) { flashT -= dt; flash.material.opacity = Math.max(0, flashT / 0.35) * 0.45; }
+  updateFloaters(dt);
+}
+
+let lastT = 0;
+function loop(t, frame) {
+  const now = t / 1000, dt = Math.min(0.05, Math.max(0, now - lastT)); lastT = now;
+  if (frame) {
+    const ref = renderer.xr.getReferenceSpace();
+    const vp = frame.getViewerPose(ref);
+    if (vp) {
+      const p = vp.transform.position, o = vp.transform.orientation;
+      headWorld.set(p.x, p.y, p.z); headQuat.set(o.x, o.y, o.z, o.w);
+    }
+    updateHands(frame, ref, now, dt);
+    update(dt);
+    afterHands();
+  }
+  renderer.render(scene, camera);
+}
+
+/* ---------------- 세션 ---------------- */
+let session = null;
+$('start').addEventListener('click', async () => {
+  initAudio();
+  settings = readSettings();
+  try {
+    await document.fonts.load(`700 40px "Noto Sans KR"`).catch(() => {});
+    session = await navigator.xr.requestSession('immersive-ar', { requiredFeatures:['local-floor'], optionalFeatures:['hand-tracking'] });
+    await renderer.xr.setSession(session);
+    session.addEventListener('end', () => { session = null; state = 'idle'; placed = false; renderer.setAnimationLoop(null); $('menu').classList.remove('hide'); });
+    session.addEventListener('select', () => {
+      if (state === 'calibrate') startCountdown();
+      else if (state === 'results') toCalibrate();
+    });
+    session.addEventListener('squeeze', () => { if (state === 'results') session.end(); });
+    $('menu').classList.add('hide');
+    toCalibrate();
+    lastT = performance.now() / 1000;
+    renderer.setAnimationLoop(loop);
+  } catch (e) {
+    $('msg').textContent = 'AR 세션 시작 실패: ' + e.message;
+  }
+});
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+</script>
+</body>
+</html>
